@@ -1,20 +1,21 @@
-import * as THREE from 'https://unpkg.com/three@0.165.0/build/three.module.js'; // Three.jsをCDNからインポート
+import * as THREE from 'https://unpkg.com/three@0.165.0/build/three.module.js';
 
 let scene, camera, renderer, planeMesh;
 let textureLoader;
 let depthMapTexture;
 let mainTexture;
 
-// ジャイロセンサー関連 (マウスシミュレーション用)
+// ジャイロセンサー関連 (マウス位置シミュレーション用)
 let currentBeta = 0; // 前後傾き (マウスY軸に対応)
 let currentGamma = 0; // 左右傾き (マウスX軸に対応)
-let sensorSensitivity = 0.05; // センサーの感度調整 (マウス移動量に対する影響度)
+const maxTilt = 20; // 最大傾き角度（画面端でのずれ具合を調整） // --- 追加・変更 ---
 
 // マウスイベント関連
-let isDragging = false;
-let previousMouseX = 0;
-let previousMouseY = 0;
-let mouseSensitivity = 0.1; // マウスドラッグの感度 (ピクセルあたりの傾き変化量)
+// ドラッグ関連の変数は不要なので削除またはコメントアウト
+// let isDragging = false;
+// let previousMouseX = 0;
+// let previousMouseY = 0;
+// let mouseSensitivity = 0.1;
 
 // シーンの初期化
 function init() {
@@ -40,19 +41,22 @@ function init() {
     // イベントリスナー
     window.addEventListener('resize', onWindowResize, false);
 
-    // --- マウスイベントリスナーを追加 ---
-    renderer.domElement.addEventListener('mousedown', onMouseDown, false);
-    renderer.domElement.addEventListener('mouseup', onMouseUp, false);
-    renderer.domElement.addEventListener('mousemove', onMouseMove, false);
-    renderer.domElement.addEventListener('mouseleave', onMouseLeave, false); // マウスがCanvasから出た時
+    // --- マウスイベントリスナーを修正 ---
+    // ドラッグ関連のイベントリスナーはコメントアウトまたは削除
+    // renderer.domElement.addEventListener('mousedown', onMouseDown, false);
+    // renderer.domElement.addEventListener('mouseup', onMouseUp, false);
+    renderer.domElement.addEventListener('mousemove', onMouseMove, false); // これだけ残す
+    // renderer.domElement.addEventListener('mouseleave', onMouseLeave, false);
     // ------------------------------------
 }
 
-// テクスチャの読み込み
+// テクスチャの読み込み (変更なし)
 function loadTextures() {
     // メイン画像
     textureLoader.load('your_photo.jpg', (texture) => {
         mainTexture = texture;
+        // 画質向上のためのanisotropy設定（任意）
+        mainTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
         console.log('メイン画像を読み込みました。');
         createParallaxPlane();
     });
@@ -60,6 +64,8 @@ function loadTextures() {
     // 深度マップ
     textureLoader.load('your_depth_map.png', (texture) => {
         depthMapTexture = texture;
+        // 画質向上のためのanisotropy設定（任意）
+        depthMapTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
         console.log('深度マップを読み込みました。');
         createParallaxPlane();
     });
@@ -107,6 +113,7 @@ function createParallaxPlane() {
                 float depth = texture2D(uDepthMap, vUv).r;
 
                 // 深度値に基づいてUV座標をずらす
+                // あなたの解決策に合わせて 'depth' を使用
                 vec2 offset = vec2(uSensorX, uSensorY) * depth * uParallaxStrength;
                 vec2 newUv = vUv + offset;
 
@@ -122,66 +129,46 @@ function createParallaxPlane() {
     scene.add(planeMesh);
 }
 
-// ウィンドウリサイズ時の処理
+// ウィンドウリサイズ時の処理 (変更なし)
 function onWindowResize() {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
 }
 
-// --- マウスイベントハンドラ ---
-function onMouseDown(event) {
-    isDragging = true;
-    previousMouseX = event.clientX;
-    previousMouseY = event.clientY;
-    document.body.style.cursor = 'grabbing'; // カーソルを掴む形にする
-}
-
-function onMouseUp(event) {
-    isDragging = false;
-    document.body.style.cursor = 'grab'; // カーソルを掴める形に戻す
-}
-
-function onMouseLeave(event) {
-    // マウスがCanvas外に出た時もドラッグを終了
-    if (isDragging) {
-        onMouseUp(event);
-    }
-}
+// --- マウスイベントハンドラを修正 ---
+// ドラッグ関連の関数は削除またはコメントアウト
+// function onMouseDown(event) { ... }
+// function onMouseUp(event) { ... }
+// function onMouseLeave(event) { ... }
 
 function onMouseMove(event) {
-    if (!isDragging) return;
+    // マウスカーソルがCanvas要素内のどこにあるかを取得
+    const rect = renderer.domElement.getBoundingClientRect();
+    const mouseX = event.clientX - rect.left; // Canvas左端からのX座標
+    const mouseY = event.clientY - rect.top;   // Canvas上端からのY座標
 
-    const deltaX = event.clientX - previousMouseX;
-    const deltaY = event.clientY - previousMouseY;
+    // マウス位置を -1.0 から 1.0 の範囲に正規化
+    // 中央が 0.0 になるように調整
+    const normalizedX = (mouseX / rect.width) * 2 - 1; // -1 (左端) から 1 (右端)
+    const normalizedY = (mouseY / rect.height) * 2 - 1; // -1 (上端) から 1 (下端)
 
-    // マウスの移動量をジャイロセンサーの傾きにマッピング
-    // X軸の移動はgamma（左右傾き）に影響
-    // Y軸の移動はbeta（前後傾き）に影響
-    // マウスの移動方向と画像の移動方向を合わせるため、deltaXに負号を付けています
-    // （マウスを右に動かすと画像が右にずれるような効果）
-    currentGamma += deltaX * mouseSensitivity;
-    currentBeta -= deltaY * mouseSensitivity; // Y軸は逆方向の動きが自然な場合が多い
-
-    // 傾きに制限を設ける（極端な動きを防ぐため）
-    // 例えば、-50から50の範囲にクランプ
-    currentGamma = Math.max(-50, Math.min(50, currentGamma));
-    currentBeta = Math.max(-50, Math.min(50, currentBeta));
-
-    previousMouseX = event.clientX;
-    previousMouseY = event.clientY;
+    // 正規化されたマウス位置を傾きにマッピング
+    // マウスを右に動かすと、写真が左にずれるような効果が一般的
+    // (マウスを覗き窓として考えるため)
+    // -normalizedX は、マウスが右に動くと、写真が左に動くようにするため
+    currentGamma = -normalizedX * maxTilt; // X軸のずれ
+    currentBeta = normalizedY * maxTilt;  // Y軸のずれ
 }
 // ----------------------------
 
-// アニメーションループ
+// アニメーションループ (変更なし)
 function animate() {
     requestAnimationFrame(animate);
 
     if (planeMesh) {
         // マウスの動きによって更新された値をシェーダーに渡す
-        // uSensorX (シェーダー内のX軸傾き) に currentGamma (マウスX軸由来の左右傾き) を渡す
         planeMesh.material.uniforms.uSensorX.value = currentGamma;
-        // uSensorY (シェーダー内のY軸傾き) に currentBeta (マウスY軸由来の前後傾き) を渡す
         planeMesh.material.uniforms.uSensorY.value = currentBeta;
     }
 
@@ -192,17 +179,8 @@ function animate() {
 init();
 animate();
 
-// ジャイロセンサーの許可ボタンはPC確認中は不要なので削除、またはコメントアウト
-// document.getElementById('permissionButton').addEventListener('click', () => { ... });
+// ジャイロセンサーの許可ボタンはPC確認中は引き続き非表示
 const permissionButton = document.getElementById('permissionButton');
 if (permissionButton) {
-    permissionButton.style.display = 'none'; // PC確認中は非表示にする
+    permissionButton.style.display = 'none';
 }
-// または、以下のようにボタンを削除しても良い
-// if (permissionButton) {
-//     permissionButton.parentNode.removeChild(permissionButton);
-// }
-
-// PCで確認する場合、ジャイロセンサーイベントリスナーの設定関数は呼び出さない
-// setupDeviceOrientationListener(); // コメントアウト
-// handleDeviceOrientation(); // コメントアウト
